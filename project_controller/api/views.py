@@ -1,48 +1,58 @@
 from django.shortcuts import render
-from rest_framework import generics, status
-from .serializers import RoomSerializer, CreateRoomSerializer, UpdateRoomSerializer
+from rest_framework import status
+from .serializers import RoomSerializer, CreateRoomSerializer, UpdateRoomSerializer, CreateRoomSerializer2
 from .models import Room
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.http import JsonResponse
+from rest_framework.renderers import JSONRenderer
+from rest_framework.parsers import JSONParser
+
 
 
 # Create your views here.
 
 
-class RoomView(generics.ListAPIView):
-    queryset = Room.objects.all()
-    serializer_class = RoomSerializer
+class RoomView(APIView):
+    def get(self, request, format=None):
+        room = Room.objects.all()
+        serializer = RoomSerializer(room, many=True)
+        return Response(serializer.data)
 
 
 class GetRoom(APIView):
-    serializer_class = RoomSerializer
-    lookup_url_kwarg = 'code'
-
     def get(self, request, format=None):
-        code = request.GET.get(self.lookup_url_kwarg)
+        #http://127.0.0.1:8000/api/get-room/?code=AFAFAF => code = AFAFAF
+        code = self.request.GET.get('code')
         if code != None:
             room = Room.objects.filter(code=code)
-            if len(room) > 0:
-                data = RoomSerializer(room[0]).data
-                data['is_host'] = self.request.session.session_key == room[0].host
+            if room.exists:
+                # I dont get it
+                room = room[0]
+                data = RoomSerializer(room).data
+                data.is_host = self.request.session.session_key == room.host
                 return Response(data, status=status.HTTP_200_OK)
             return Response({'Room Not Found': 'Invalid Room Code.'}, status=status.HTTP_404_NOT_FOUND)
 
         return Response({'Bad Request': 'Code paramater not found in request'}, status=status.HTTP_400_BAD_REQUEST)
 
+class GetRoomById(APIView):
+    def get(self, request, pk, format=None):
+        room = Room.objects.filter(pk=pk)
+        serializer = RoomSerializer(room[0], many=False)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 class JoinRoom(APIView):
-    lookup_url_kwarg = 'code'
 
     def post(self, request, format=None):
         if not self.request.session.exists(self.request.session.session_key):
             self.request.session.create()
 
-        code = request.data.get(self.lookup_url_kwarg)
+        code = self.request.GET.get('code')
         if code != None:
             room_result = Room.objects.filter(code=code)
-            if len(room_result) > 0:
+            if room_result.exists:
                 room = room_result[0]
                 self.request.session['room_code'] = code
                 return Response({'message': 'Room Joined!'}, status=status.HTTP_200_OK)
@@ -59,7 +69,7 @@ class CreateRoomView(APIView):
         if not self.request.session.exists(self.request.session.session_key):
             self.request.session.create()
 
-        serializer = self.serializer_class(data=request.data)
+        serializer = CreateRoomSerializer(data=request.data)
         if serializer.is_valid():
             guest_can_pause = serializer.data.get('guest_can_pause')
             votes_to_skip = serializer.data.get('votes_to_skip')
@@ -69,7 +79,7 @@ class CreateRoomView(APIView):
                 room = queryset[0]
                 room.guest_can_pause = guest_can_pause
                 room.votes_to_skip = votes_to_skip
-                room.save(update_fields=['guest_can_pause', 'votes_to_skip'])
+                room.save()
                 self.request.session['room_code'] = room.code
                 return Response(RoomSerializer(room).data, status=status.HTTP_200_OK)
             else:
@@ -80,6 +90,39 @@ class CreateRoomView(APIView):
                 return Response(RoomSerializer(room).data, status=status.HTTP_201_CREATED)
 
         return Response({'Bad Request': 'Invalid data...'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CreateRoomView2(APIView):
+    serializer_class = CreateRoomSerializer
+
+    def post(self, request, format=None):
+        if not self.request.session.exists(self.request.session.session_key):
+            self.request.session.create()
+        # request.data._mutable = True
+        content=request.data.copy()
+        content['host'] = self.request.session.session_key
+        serializer = CreateRoomSerializer2(data=content)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class HttpRequest(APIView):
+    def get(self, request, format=None):
+        scheme = self.request.scheme
+        body = self.request.body
+        method = self.request.method
+        code = self.request.GET
+        return Response(code, status=status.HTTP_200_OK)
+
+
+
+class CurrentSession(APIView):
+    def get(self, format=None):
+        if not self.request.session.exists(self.request.session.session_key):
+            self.request.session.create()\
+
+        return Response(self.request.session.session_key, status=status.HTTP_200_OK)
 
 
 class UserInRoom(APIView):
@@ -99,7 +142,7 @@ class LeaveRoom(APIView):
             self.request.session.pop('room_code')
             host_id = self.request.session.session_key
             room_results = Room.objects.filter(host=host_id)
-            if len(room_results) > 0:
+            if room_results.exists > 0:
                 room = room_results[0]
                 room.delete()
 
@@ -113,7 +156,7 @@ class UpdateRoom(APIView):
         if not self.request.session.exists(self.request.session.session_key):
             self.request.session.create()
 
-        serializer = self.serializer_class(data=request.data)
+        serializer = UpdateRoomSerializer(data=request.data)
         if serializer.is_valid():
             guest_can_pause = serializer.data.get('guest_can_pause')
             votes_to_skip = serializer.data.get('votes_to_skip')
@@ -130,7 +173,7 @@ class UpdateRoom(APIView):
 
             room.guest_can_pause = guest_can_pause
             room.votes_to_skip = votes_to_skip
-            room.save(update_fields=['guest_can_pause', 'votes_to_skip'])
+            room.save()
             return Response(RoomSerializer(room).data, status=status.HTTP_200_OK)
 
         return Response({'Bad Request': "Invalid Data..."}, status=status.HTTP_400_BAD_REQUEST)

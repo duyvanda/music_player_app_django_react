@@ -45,4 +45,4 @@ or for development:
 ```bash
 npm run dev
 ```
-
+### Spotify Premium Accout Required
